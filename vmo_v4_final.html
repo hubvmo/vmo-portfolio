@@ -330,13 +330,9 @@ table.pft tr:hover td{background:var(--bg2)}
     <div class="login-logo">VMO</div>
     <div class="login-sub">Gestão de Portfólio · Bemobi</div>
     <div class="login-err" id="login-err"></div>
-    <div class="login-success-chip" id="login-success-chip"><span>✓</span><span id="login-success-msg"></span></div>
-    <!-- Google Sign-In button (shown when Client ID is configured) -->
-    <div id="google-signin-section">
-      <div class="no-client-id-note" id="no-client-id-note">
-        ⚙️ Client ID do Google não configurado. <span class="setup-link" onclick="document.getElementById('manual-section').style.display='';document.getElementById('google-signin-section').style.display='none'">Usar login manual →</span><br>
-        <a href="https://console.cloud.google.com/" target="_blank" style="color:var(--blue)">Criar Client ID no Google Cloud Console</a> e substituir <code>GOOGLE_CLIENT_ID</code> no HTML.
-      </div>
+
+    <!-- Google Sign-In button -->
+    <div id="google-signin-section" style="margin-bottom:12px">
       <div class="google-btn-wrap">
         <div id="g_id_onload"
           data-client_id="187996983359-qlg47ta32htmuo8jdjddnkee6fosv91l.apps.googleusercontent.com"
@@ -353,20 +349,21 @@ table.pft tr:hover td{background:var(--bg2)}
           data-width="330">
         </div>
       </div>
-      <div class="login-hint" style="margin-top:8px">
-        Login exclusivo para <b>@bemobi.com</b>.<br>
-        Externos: apenas com convite do GP responsável.
-      </div>
     </div>
-    <!-- Manual fallback (for when no Client ID) -->
-    <div id="manual-section" style="display:none">
+
+    <!-- Divider -->
+    <div class="login-divider" id="login-divider">ou entre com email</div>
+
+    <!-- Manual login (always visible) -->
+    <div id="manual-section">
       <input class="login-input" type="email" id="login-email" placeholder="seu@bemobi.com ou email externo" onkeydown="if(event.key==='Enter')doLoginManual()">
       <input class="login-input" type="text" id="login-name" placeholder="Seu nome completo" onkeydown="if(event.key==='Enter')doLoginManual()">
       <button class="login-btn" onclick="doLoginManual()">Entrar</button>
-      <div class="login-hint" style="margin-top:8px">
-        Usuários <b>@bemobi.com</b> entram como Editor.<br>
-        Externos: precisam ter email liberado em algum cronograma.
-      </div>
+    </div>
+
+    <div class="login-hint" style="margin-top:10px">
+      Acesso exclusivo para <b>@bemobi.com</b>.<br>
+      Externos: apenas com convite do GP responsável.
     </div>
   </div>
 </div>
@@ -624,12 +621,67 @@ function finalizeLogin(email, name, picture) {
 
   // Apply UI restrictions based on role
   applyRoleUI();
-  initFilters(); renderPortfolio(); renderUpdatesProjectList();
+  initFilters();
 
-  // External users: go directly to schedule if they have exactly one project
-  if (role === 'external') {
+  // Auto-sync: load persisted schedules + sync Jira on every login
+  autoLoadOnLogin();
+}
+
+async function autoLoadOnLogin() {
+  setSyncTxt('syncing', 'Carregando dados...');
+  // Step 1: Load persisted schedules from Google Sheets
+  await loadSchedulesFromSheet();
+  // Step 2: Sync projects from Jira
+  await autoSyncProjects();
+  // Step 3: Render everything
+  renderPortfolio();
+  renderUpdatesProjectList();
+  // Step 4: External users go directly to their project
+  if (currentUser?.role === 'external') {
     const myProjects = PROJECTS.filter(p => canViewProject(p.key));
     if (myProjects.length === 1) openProject(myProjects[0].key);
+  }
+}
+
+async function loadSchedulesFromSheet() {
+  if (!GAS_URL || GAS_URL.includes('COLE_AQUI')) return;
+  try {
+    const r = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'loadSchedules' })
+    });
+    const d = await r.json();
+    if (d.ok && d.schedules) {
+      // Merge loaded schedules into local state
+      Object.entries(d.schedules).forEach(([key, data]) => {
+        schedules[key] = data;
+      });
+      setSyncTxt('ok', `✓ Dados carregados`);
+      setTimeout(() => setSyncTxt('idle', ''), 3000);
+    }
+  } catch (e) {
+    console.warn('Erro ao carregar schedules:', e.message);
+  }
+}
+
+async function autoSyncProjects() {
+  if (!GAS_URL || GAS_URL.includes('COLE_AQUI')) return;
+  try {
+    const r = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'syncProjects', jql: JIRA_JQL, fields: JIRA_SYNC_FIELDS })
+    });
+    const d = await r.json();
+    if (d.ok && d.projects && d.projects.length) {
+      applyJiraSync(d.projects);
+      setSyncTxt('ok', `✓ ${d.projects.length} projetos`);
+      setTimeout(() => setSyncTxt('idle', ''), 4000);
+    }
+  } catch (e) {
+    console.warn('Erro ao sincronizar Jira:', e.message);
+    setSyncTxt('idle', '');
   }
 }
 
@@ -660,15 +712,18 @@ function applyRoleUI() {
 
 // ── PAGE LOAD ──────────────────────────────────────────────
 window.addEventListener('load', function() {
+  // Manual login always visible
+  // Google button is a bonus — if it loads, great; if not, manual works
   const hasClientId = GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== 'GOOGLE_CLIENT_ID';
-  if (!hasClientId) {
-    document.getElementById('no-client-id-note').style.display = '';
-    document.getElementById('manual-section').style.display = '';
-    const gWrap = document.querySelector('.google-btn-wrap');
-    if (gWrap) gWrap.style.display = 'none';
-  } else {
+  if (hasClientId) {
     const gLoad = document.getElementById('g_id_onload');
     if (gLoad) gLoad.setAttribute('data-client_id', GOOGLE_CLIENT_ID);
+  } else {
+    // Hide Google section if no client ID
+    const gs = document.getElementById('google-signin-section');
+    const div = document.getElementById('login-divider');
+    if (gs) gs.style.display = 'none';
+    if (div) div.style.display = 'none';
   }
 });
 
@@ -1181,7 +1236,7 @@ function deleteUpdate(key,uid2){
   if(!isAdmin()){alert('Apenas administradores podem apagar atualizações.');return;}
   if(!confirm('Apagar esta atualização?'))return;
   const sc=schedules[key];sc.updates=(sc.updates||[]).filter(u=>u.id!==uid2);
-  logChange(key,'Atualização apagada','#dc2626');renderUpdates(key);renderUpdatesProjectList();
+  logChange(key,'Atualização apagada','#dc2626');renderUpdates(key);renderUpdatesProjectList();persistUpdates(key);
 }
 function reactUpd(key,uid2,emoji){const sc=schedules[key];const u=(sc?.updates||[]).find(x=>x.id===uid2);if(!u)return;if(!u.reactions)u.reactions={};u.reactions[emoji]=(u.reactions[emoji]||0)+1;renderUpdates(key);}
 function submitUpdate(){
@@ -1192,7 +1247,7 @@ function submitUpdate(){
   const p=PROJECTS.find(x=>x.key===curUpdKey);const st=getStats(curUpdKey);
   sc.updates.push({id:uid(),author:currentUser?.name||'Usuário',when:nowStr(),project:p?.summary||curUpdKey,body,tag:document.getElementById('upd-status-tag').value,includeEmail:document.getElementById('include-email').checked,health:st.health,reactions:{}});
   document.getElementById('composer-text').value='';document.getElementById('upd-status-tag').value='';
-  logChange(curUpdKey,'Atualização publicada','#6924E1');renderUpdates(curUpdKey);renderUpdatesProjectList();
+  logChange(curUpdKey,'Atualização publicada','#6924E1');renderUpdates(curUpdKey);renderUpdatesProjectList();persistUpdates(curUpdKey);
 }
 function fmtText(t){const ta=document.getElementById('composer-text');if(t==='bold')ta.value+='**negrito**';else if(t==='italic')ta.value+='_itálico_';else if(t==='list')ta.value+='\n• ';}
 
@@ -1539,7 +1594,7 @@ function moveTip(e){const t=document.getElementById('tip');t.style.left=(e.clien
 function hideTip(){document.getElementById('tip').style.display='none';}
 
 // ── INLINE ACTIONS ──
-function inlineDone(tid,msId,ev){ev.stopPropagation();const sched=schedules[curKey];const t=sched.tasks.find(x=>x.id===tid);if(!t)return;t.endReal=ds(TODAY);t.status='done';logChange(curKey,`Tarefa "${t.name}" concluída`,'#16a34a');autoUpdateMsStatus(curKey);renderSchedule();syncToJira(curKey);}
+function inlineDone(tid,msId,ev){ev.stopPropagation();const sched=schedules[curKey];const t=sched.tasks.find(x=>x.id===tid);if(!t)return;t.endReal=ds(TODAY);t.status='done';logChange(curKey,`Tarefa "${t.name}" concluída`,'#16a34a');autoUpdateMsStatus(curKey);renderSchedule();syncToJira(curKey);persistSchedule(curKey);}
 function editEndReal(tid,ev){ev.stopPropagation();const sched=schedules[curKey];const t=sched.tasks.find(x=>x.id===tid);if(!t)return;const val=prompt('Data real (AAAA-MM-DD):',t.endReal||ds(TODAY));if(val&&/^\d{4}-\d{2}-\d{2}$/.test(val)){t.endReal=val;logChange(curKey,`Data real de "${t.name}": ${val}`,'#d97706');autoUpdateMsStatus(curKey);renderSchedule();}}
 function cloneMs(msId){const sched=schedules[curKey];const ms=sched.milestones.find(m=>m.id===msId);if(!ms)return;const newMs={...JSON.parse(JSON.stringify(ms)),id:uid(),name:ms.name+' (cópia)'};sched.milestones.push(newMs);const msTasks=sched.tasks.filter(t=>t.msId===msId);const idMap={};msTasks.forEach(t=>{const newId=uid();idMap[t.id]=newId;sched.tasks.push({...JSON.parse(JSON.stringify(t)),id:newId,msId:newMs.id,endReal:'',status:'not_started'});});logChange(curKey,`Marco "${ms.name}" clonado`,'#6924E1');renderSchedule();}
 function cloneTask(msId,taskId){const sched=schedules[curKey];const t=sched.tasks.find(x=>x.id===taskId);if(!t)return;sched.tasks.push({...JSON.parse(JSON.stringify(t)),id:uid(),name:t.name+' (cópia)',endReal:'',status:'not_started',depId:''});logChange(curKey,`Tarefa "${t.name}" clonada`,'#6924E1');renderSchedule();}
@@ -1563,8 +1618,8 @@ function openMsModal(id){editMsId=id;const sched=schedules[curKey];const ms=id?s
   const modal=getOrBuildModal('ms-modal','Marco',`<div class="fg"><label>Nome *</label><input type="text" id="ms-name"></div><div class="fg-row"><div class="fg"><label>Início *</label><input type="date" id="ms-start"></div><div class="fg"><label>Prazo *</label><input type="date" id="ms-deadline"></div></div><div class="fg"><label>Data real de fim</label><input type="date" id="ms-endreal"><div class="info-box" id="ms-er-info" style="margin-top:4px;font-size:10px"></div></div><div class="section-lbl" style="margin-top:3px">Responsáveis</div><div class="a-list" id="ms-a-list"></div><button class="add-a" onclick="addA('ms-a-list')"><i class="ti ti-plus" style="font-size:10px"></i> Adicionar</button><div class="fg-row" style="margin-top:3px"><div class="fg"><label>Status</label><select id="ms-status"><option value="not_started">Não iniciado</option><option value="in_progress">Em andamento</option><option value="done">Concluído</option><option value="blocked">Bloqueado</option><option value="cancelled">Cancelado</option></select></div><div class="fg"><label>Cor</label><select id="ms-color"><option value="#6366f1">Índigo</option><option value="#8b5cf6">Violeta</option><option value="#06b6d4">Ciano</option><option value="#10b981">Verde</option><option value="#f59e0b">Âmbar</option><option value="#ef4444">Vermelho</option><option value="#3b82f6">Azul</option><option value="#ec4899">Rosa</option></select></div></div>`,
   `<button class="btn-d" id="ms-del-btn" onclick="deleteMs()" style="display:none">Excluir</button><button class="btn-c" onclick="closeM('ms-modal')">Cancelar</button><button class="btn-s" onclick="saveMs()">Salvar</button>`);
   document.getElementById('ms-name').value=ms?ms.name:'';document.getElementById('ms-start').value=ms?ms.start:ds(TODAY);document.getElementById('ms-deadline').value=ms?ms.deadline:ds(addD(TODAY,30));document.getElementById('ms-status').value=ms?ms.status:'not_started';document.getElementById('ms-color').value=ms?ms.color:'#6366f1';document.getElementById('ms-del-btn').style.display=ms?'':'none';setAs('ms-a-list',ms?ms.assignees:[]);const er=autoEr||ms?.endReal||'';document.getElementById('ms-endreal').value=er;document.getElementById('ms-endreal').disabled=!!autoEr;document.getElementById('ms-er-info').textContent=autoEr?`Calculado automaticamente (${fmtBR(autoEr)}).`:`Preencha manualmente se necessário.`;document.getElementById('ms-er-info').className='info-box'+(autoEr?' good':'');openM('ms-modal');}
-function saveMs(){const name=document.getElementById('ms-name').value.trim();if(!name){alert('Informe o nome');return;}const sched=schedules[curKey];const data={name,start:document.getElementById('ms-start').value,deadline:document.getElementById('ms-deadline').value,endReal:document.getElementById('ms-endreal').value,status:document.getElementById('ms-status').value,color:document.getElementById('ms-color').value,assignees:getAs('ms-a-list')};if(editMsId){const ms=sched.milestones.find(m=>m.id===editMsId);const old=JSON.parse(JSON.stringify(ms));Object.assign(ms,data);if(old.deadline!==data.deadline)logChange(curKey,`Marco "${name}": prazo ${fmtBR(old.deadline)} → ${fmtBR(data.deadline)}`,'#d97706');}else{const newMs={id:uid(),...data};sched.milestones.push(newMs);if(!sched.baseline)sched.baseline={milestones:[JSON.parse(JSON.stringify(newMs))],tasks:JSON.parse(JSON.stringify(sched.tasks))};logChange(curKey,`Marco "${name}" criado`,'#6924E1');}closeM('ms-modal');renderSchedule();renderPortfolio();syncToJira(curKey);}
-function deleteMs(){if(!confirm('Excluir marco e suas tarefas?'))return;const sched=schedules[curKey];sched.tasks=sched.tasks.filter(t=>t.msId!==editMsId);sched.milestones=sched.milestones.filter(m=>m.id!==editMsId);closeM('ms-modal');renderSchedule();renderPortfolio();}
+function saveMs(){const name=document.getElementById('ms-name').value.trim();if(!name){alert('Informe o nome');return;}const sched=schedules[curKey];const data={name,start:document.getElementById('ms-start').value,deadline:document.getElementById('ms-deadline').value,endReal:document.getElementById('ms-endreal').value,status:document.getElementById('ms-status').value,color:document.getElementById('ms-color').value,assignees:getAs('ms-a-list')};if(editMsId){const ms=sched.milestones.find(m=>m.id===editMsId);const old=JSON.parse(JSON.stringify(ms));Object.assign(ms,data);if(old.deadline!==data.deadline)logChange(curKey,`Marco "${name}": prazo ${fmtBR(old.deadline)} → ${fmtBR(data.deadline)}`,'#d97706');}else{const newMs={id:uid(),...data};sched.milestones.push(newMs);if(!sched.baseline)sched.baseline={milestones:[JSON.parse(JSON.stringify(newMs))],tasks:JSON.parse(JSON.stringify(sched.tasks))};logChange(curKey,`Marco "${name}" criado`,'#6924E1');}closeM('ms-modal');renderSchedule();renderPortfolio();syncToJira(curKey);persistSchedule(curKey);}
+function deleteMs(){if(!confirm('Excluir marco e suas tarefas?'))return;const sched=schedules[curKey];sched.tasks=sched.tasks.filter(t=>t.msId!==editMsId);sched.milestones=sched.milestones.filter(m=>m.id!==editMsId);closeM('ms-modal');renderSchedule();renderPortfolio();persistSchedule(curKey);}
 
 // Task
 function openTaskModal(msId,taskId){editTaskMsId=msId;editTaskId=taskId;depModeVal2='blocked';const sched=schedules[curKey];const t=taskId?sched.tasks.find(x=>x.id===taskId):null;
@@ -1576,7 +1631,7 @@ function openTaskModal(msId,taskId){editTaskMsId=msId;editTaskId=taskId;depModeV
   function updDep(){const hasD=!!ds2.value;dtw.style.display=hasD?'':'none';dmw.style.display=hasD?'':'none';if(hasD){document.getElementById('t-deptype').value=t?.depType||'TI';depModeVal2=t?.depMode||'blocked';document.getElementById('dep-block-btn').style.fontWeight=depModeVal2==='blocked'?'700':'400';document.getElementById('dep-par-btn').style.fontWeight=depModeVal2==='parallel'?'700':'400';}}
   ds2.onchange=updDep;updDep();openM('task-modal');}
 function saveTask(){const name=document.getElementById('t-name').value.trim();if(!name){alert('Informe o nome');return;}const sched=schedules[curKey];const depId=document.getElementById('t-dep').value;const data={id:editTaskId||uid(),msId:editTaskMsId,name,start:document.getElementById('t-start').value,deadline:document.getElementById('t-deadline').value,endReal:document.getElementById('t-endreal').value,assignees:getAs('t-a-list'),depId,depType:depId?document.getElementById('t-deptype').value:'',depMode:depId?depModeVal2:'',status:document.getElementById('t-status').value,notes:document.getElementById('t-notes').value,jiraLink:document.getElementById('t-jiralink').value,jiraLinkStatus:''};if(editTaskId){const idx=sched.tasks.findIndex(x=>x.id===editTaskId);const old=idx>=0?JSON.parse(JSON.stringify(sched.tasks[idx])):null;if(idx>=0)sched.tasks[idx]=data;if(old&&old.deadline!==data.deadline)logChange(curKey,`Tarefa "${name}": prazo ${fmtBR(old.deadline)} → ${fmtBR(data.deadline)}`,'#d97706');}else{sched.tasks.push(data);logChange(curKey,`Tarefa "${name}" criada`,'#6924E1');if(!sched.baseline)sched.baseline={milestones:JSON.parse(JSON.stringify(sched.milestones)),tasks:[JSON.parse(JSON.stringify(data))]};else sched.baseline.tasks.push(JSON.parse(JSON.stringify(data)));}autoUpdateMsStatus(curKey);closeM('task-modal');renderSchedule();renderPortfolio();syncToJira(curKey);}
-function deleteTask(){if(!confirm('Excluir tarefa?'))return;const sched=schedules[curKey];sched.tasks=sched.tasks.filter(t=>t.id!==editTaskId);sched.tasks.forEach(t=>{if(t.depId===editTaskId)t.depId='';});closeM('task-modal');renderSchedule();}
+function deleteTask(){if(!confirm('Excluir tarefa?'))return;const sched=schedules[curKey];sched.tasks=sched.tasks.filter(t=>t.id!==editTaskId);sched.tasks.forEach(t=>{if(t.depId===editTaskId)t.depId='';});closeM('task-modal');renderSchedule();persistSchedule(curKey);}
 
 // Calendar
 function openCalModal(){const modal=getOrBuildModal('cal-modal','Calendário de Trabalho',`<div class="info-box">Define o calendário de feriados e dias não úteis.</div><div class="fg"><label>País</label><select id="cal-country"><option value="BR">🇧🇷 Brasil</option><option value="CL">🇨🇱 Chile</option><option value="MX">🇲🇽 México</option><option value="AR">🇦🇷 Argentina</option><option value="US">🇺🇸 EUA</option><option value="CUSTOM">Customizado</option></select></div><div class="fg"><label>Feriados extras (AAAA-MM-DD por linha)</label><textarea id="cal-holidays" rows="3" placeholder="2026-11-02"></textarea></div>`,`<button class="btn-c" onclick="closeM('cal-modal')">Cancelar</button><button class="btn-s" onclick="saveCal()">Salvar</button>`);const sc=schedules[curKey];document.getElementById('cal-country').value=sc?.calendar||'BR';document.getElementById('cal-holidays').value=(sc?.holidays||[]).join('\n');openM('cal-modal');}
@@ -1617,7 +1672,41 @@ async function exportPng(){try{const canvas=await html2canvas(document.getElemen
 function openAuditModal(){const modal=getOrBuildModal('audit-modal','Histórico',`<div id="audit-list" style="display:flex;flex-direction:column;gap:5px;max-height:400px;overflow-y:auto"></div>`,`<button class="btn-c" onclick="closeM('audit-modal')">Fechar</button>`);const log=(schedules[curKey]?.auditLog||[]);const list=document.getElementById('audit-list');list.innerHTML='';if(!log.length){list.innerHTML='<div style="font-size:10.5px;color:var(--text3);padding:7px">Nenhuma alteração ainda.</div>';openM('audit-modal');return;}log.forEach(e=>{const div=document.createElement('div');div.style.cssText='display:flex;gap:9px;padding:7px 9px;background:var(--bg2);border-radius:6px';div.innerHTML=`<div style="width:7px;height:7px;border-radius:50%;background:${e.color||'#6924E1'};flex-shrink:0;margin-top:3px"></div><div><span style="font-size:10.5px;font-weight:600;color:var(--text)">${e.who}</span><span style="font-size:9px;color:var(--text3);margin-left:5px">${e.when}</span><div style="font-size:10.5px;color:var(--text2);margin-top:1px">${e.desc}</div></div>`;list.appendChild(div);});openM('audit-modal');}
 
 // ── JIRA SYNC ──
-const GAS_URL='https://script.google.com/macros/s/AKfycbz2XbWprwmCuFvA1GOhgqb43Wsp7tMCOMAk6uHlD2SI7KaxwYNZU2Odm4qycdPpbdMneQ/exec';
+// ── PERSISTENCE ──────────────────────────────────────────
+async function persistSchedule(key) {
+  if (!GAS_URL || GAS_URL.includes('COLE_AQUI')) return;
+  if (!schedules[key]) return;
+  try {
+    await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'saveSchedule',
+        projectKey: key,
+        scheduleData: schedules[key],
+        userName: currentUser?.name || ''
+      })
+    });
+  } catch (e) { console.warn('Erro ao salvar cronograma:', e.message); }
+}
+
+async function persistUpdates(key) {
+  if (!GAS_URL || GAS_URL.includes('COLE_AQUI')) return;
+  if (!schedules[key]) return;
+  try {
+    await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'saveUpdates',
+        projectKey: key,
+        updates: schedules[key].updates || []
+      })
+    });
+  } catch (e) { console.warn('Erro ao salvar updates:', e.message); }
+}
+
+const GAS_URL='https://script.google.com/macros/s/AKfycbyZIspUA1yqpcvI5f23wTzvfwiw03Fui2S0ig1H6srHbpuY7IB3YmQn2uafm1orllKfdw/exec';
 const JIRA_SYNC_FIELDS='summary,status,issuetype,duedate,customfield_28494,customfield_28488,customfield_29150,customfield_27831,customfield_29719';
 const JIRA_JQL='project = VMO AND issuetype in (Comercial, Produtos, Tarefa) ORDER BY customfield_28488 ASC';
 
