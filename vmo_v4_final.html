@@ -261,6 +261,9 @@ table.pft tr:hover td{background:var(--bg2)}
 .st-ms{text-decoration:line-through;opacity:.55}.st-task{text-decoration:line-through;opacity:.55}
 .edit-btn{display:none;position:absolute;right:3px;top:50%;transform:translateY(-50%);font-size:8.5px;padding:1px 4px;border:1px solid var(--border2);border-radius:3px;background:var(--bg);cursor:pointer;color:var(--text3);z-index:2}
 .trow:hover .edit-btn{display:flex;align-items:center;gap:1px}
+.no-edit .edit-btn{display:none!important}
+.no-edit .clone-btn{display:none!important}
+.no-edit .inline-done-btn{display:none!important}
 .atag{font-size:8.5px;padding:1px 6px;border-radius:10px;background:#ede9fe;color:#6d28d9;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis}
 .atag.ext{background:#fef9c3;color:#a16207}
 .tbadge2{font-size:8.5px;padding:2px 5px;border-radius:10px;font-weight:700;white-space:nowrap}
@@ -336,7 +339,7 @@ table.pft tr:hover td{background:var(--bg2)}
       </div>
       <div class="google-btn-wrap">
         <div id="g_id_onload"
-          data-client_id="GOOGLE_CLIENT_ID"
+          data-client_id="187996983359-qlg47ta32htmuo8jdjddnkee6fosv91l.apps.googleusercontent.com"
           data-callback="handleGoogleCredential"
           data-auto_prompt="false">
         </div>
@@ -351,8 +354,8 @@ table.pft tr:hover td{background:var(--bg2)}
         </div>
       </div>
       <div class="login-hint" style="margin-top:8px">
-        Usuários <b>@bemobi.com</b> entram como Editor.<br>
-        Externos precisam ter acesso liberado num cronograma.
+        Login exclusivo para <b>@bemobi.com</b>.<br>
+        Externos: apenas com convite do GP responsável.
       </div>
     </div>
     <!-- Manual fallback (for when no Client ID) -->
@@ -477,7 +480,7 @@ table.pft tr:hover td{background:var(--bg2)}
     <div style="flex:1"></div>
     <button class="seb pri" onclick="openTemplateModal()" id="template-btn" style="display:none"><i class="ti ti-template" style="font-size:10px"></i> Modelos</button>
     <button class="seb" id="gantt-toggle-btn" onclick="toggleGantt()" title="Exibir/ocultar o diagrama de Gantt"><i class="ti ti-layout-sidebar-right" style="font-size:10px"></i> Gantt</button>
-    <button class="seb pri" onclick="openMsModal(null)"><i class="ti ti-flag-plus" style="font-size:10px"></i> Novo marco</button>
+    <button class="seb pri" id="new-ms-btn" onclick="openMsModal(null)"><i class="ti ti-flag-plus" style="font-size:10px"></i> Novo marco</button>
   </div>
   <div id="proj-sum"></div>
   <div id="se-body">
@@ -507,77 +510,163 @@ table.pft tr:hover td{background:var(--bg2)}
 <script>
 // VMO v4 — Tainah Andrade · Bemobi · 2026
 
-// ── AUTH ──
-const GOOGLE_CLIENT_ID = 'GOOGLE_CLIENT_ID'; // Replace with your actual Client ID
-let currentUser = null;
-let globalAccess = {};
+// ── AUTH & PERMISSIONS ──
 
-// Called by Google Identity Services after user signs in
-function handleGoogleCredential(response) {
-  try {
-    // Decode the JWT payload (no verification needed — Google signed it)
-    const payload = JSON.parse(atob(response.credential.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
-    const email = (payload.email || '').toLowerCase();
-    const name = payload.name || email.split('@')[0];
-    const picture = payload.picture || null;
-    if (!payload.email_verified) {
-      showLoginErr('Email Google não verificado. Tente novamente.');
-      return;
-    }
-    finalizeLogin(email, name, picture);
-  } catch(e) {
-    showLoginErr('Erro ao processar credencial Google: ' + e.message);
-  }
+// ── PRÉ-CONFIGURADOS ──────────────────────────────────────
+// Admins: podem tudo + gerenciar acessos de todos os projetos
+const ADMIN_EMAILS = [
+  'tainah.andrade@bemobi.com',
+  'erik.moulin@bemobi.com',
+  'amanda.valentim@bemobi.com',
+  'guilherme.facchinetti@bemobi.com',
+];
+// Editors: podem editar cronogramas e atualizações
+const EDITOR_EMAILS = [
+  // 'gp.nome@bemobi.com',
+];
+// Google OAuth Client ID
+const GOOGLE_CLIENT_ID = '187996983359-qlg47ta32htmuo8jdjddnkee6fosv91l.apps.googleusercontent.com';
+
+let currentUser = null;  // {name, email, role, isAdmin, isEditor, picture}
+let globalAccess = {};   // key → [{email, role}]
+
+// ── ROLE RESOLUTION ───────────────────────────────────────
+function resolveRole(email) {
+  const e = email.toLowerCase();
+  if (ADMIN_EMAILS.includes(e))  return 'admin';
+  if (EDITOR_EMAILS.includes(e)) return 'editor';
+  if (e.endsWith('@bemobi.com')) return 'viewer';
+  return 'external';
 }
 
-// Manual fallback login (when no Google Client ID configured)
+// ── PERMISSION CHECKS ─────────────────────────────────────
+function canEdit(projectKey) {
+  if (!currentUser) return false;
+  const r = currentUser.role;
+  if (r === 'admin' || r === 'editor') return true;
+  if (r === 'external') {
+    const sc = schedules[projectKey];
+    return (sc?.access || []).some(a =>
+      a.email === currentUser.email && a.role === 'editor'
+    );
+  }
+  return false;
+}
+function canViewProject(projectKey) {
+  if (!currentUser) return false;
+  const r = currentUser.role;
+  if (r === 'admin' || r === 'editor' || r === 'viewer') return true;
+  if (r === 'external') {
+    const sc = schedules[projectKey];
+    return (sc?.access || []).some(a => a.email === currentUser.email);
+  }
+  return false;
+}
+function canViewTab(tab) {
+  // external: only schedule tab of their projects
+  if (!currentUser) return false;
+  if (currentUser.role !== 'external') return true;
+  return tab === 'schedule'; // externals only see schedule
+}
+function isAdmin() { return currentUser?.role === 'admin'; }
+function isEditorOrAbove() { return ['admin','editor'].includes(currentUser?.role); }
+
+// ── GOOGLE OAUTH ───────────────────────────────────────────
+function handleGoogleCredential(response) {
+  try {
+    const payload = JSON.parse(atob(
+      response.credential.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')
+    ));
+    const email = (payload.email || '').toLowerCase();
+    const name  = payload.name || email.split('@')[0];
+    if (!payload.email_verified) { showLoginErr('Email não verificado.'); return; }
+    if (!email.endsWith('@bemobi.com')) {
+      showLoginErr('Acesso restrito a emails @bemobi.com. Externos precisam de convite.');
+      return;
+    }
+    finalizeLogin(email, name, payload.picture || null);
+  } catch(e) { showLoginErr('Erro Google: ' + e.message); }
+}
+
+// ── MANUAL FALLBACK ────────────────────────────────────────
 function doLoginManual() {
-  const email = (document.getElementById('login-email').value || '').trim().toLowerCase();
-  const name = (document.getElementById('login-name').value || '').trim();
+  const email = (document.getElementById('login-email')?.value || '').trim().toLowerCase();
+  const name  = (document.getElementById('login-name')?.value || '').trim();
   if (!email || !/^[^@]+@[^@]+\.[^@]+$/.test(email)) { showLoginErr('E-mail inválido'); return; }
   if (!name) { showLoginErr('Informe seu nome'); return; }
+  // bemobi users pass freely; externals need to be in an access list
+  if (!email.endsWith('@bemobi.com')) {
+    const inList = Object.values(schedules).some(s =>
+      (s.access || []).some(a => a.email === email)
+    );
+    if (!inList) {
+      showLoginErr('Email externo não cadastrado. Solicite acesso ao GP responsável.');
+      return;
+    }
+  }
   finalizeLogin(email, name, null);
 }
 
+// ── FINALIZE LOGIN ─────────────────────────────────────────
 function finalizeLogin(email, name, picture) {
-  const isBemobi = email.endsWith('@bemobi.com');
-  if (!isBemobi) {
-    // External user: must have email in at least one schedule's access list
-    const found = Object.values(globalAccess).some(list => list.some(a => a.email === email));
-    // Also check all schedules already loaded
-    const foundInSchedules = Object.values(schedules).some(s =>
-      (s.access || []).some(a => a.email === email)
-    );
-    if (!found && !foundInSchedules) {
-      showLoginErr('Acesso não autorizado. Seu email precisa estar liberado em pelo menos um cronograma. Solicite ao GP responsável.');
-      return;
-    }
-  }
-  currentUser = { name, email, role: isBemobi ? 'editor' : 'viewer', isAdmin: isBemobi, picture };
+  const role = resolveRole(email);
+  currentUser = { name, email, role,
+    isAdmin:  role === 'admin',
+    isEditor: role === 'editor' || role === 'admin',
+    picture
+  };
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('tn-uname').textContent = name.split(' ')[0];
   document.getElementById('tn-avatar').textContent = name.charAt(0).toUpperCase();
-  document.getElementById('tn-role').textContent = isBemobi ? 'Editor' : 'Visualizador';
+
+  const roleLabels = {admin:'Admin', editor:'Editor', viewer:'Visualizador', external:'Externo'};
+  document.getElementById('tn-role').textContent = roleLabels[role] || role;
+
+  // Apply UI restrictions based on role
+  applyRoleUI();
   initFilters(); renderPortfolio(); renderUpdatesProjectList();
+
+  // External users: go directly to schedule if they have exactly one project
+  if (role === 'external') {
+    const myProjects = PROJECTS.filter(p => canViewProject(p.key));
+    if (myProjects.length === 1) openProject(myProjects[0].key);
+  }
 }
 
 function showLoginErr(msg) {
   const el = document.getElementById('login-err');
-  el.textContent = msg; el.style.display = '';
+  if (el) { el.textContent = msg; el.style.display = ''; }
 }
 
-// On page load: check if Google Client ID is configured
+// ── APPLY UI RESTRICTIONS ──────────────────────────────────
+function applyRoleUI() {
+  const r = currentUser?.role;
+  // Hide nav tabs for externals
+  if (r === 'external') {
+    document.querySelectorAll('.nav-tab').forEach(t => {
+      const view = t.dataset.view;
+      if (view !== 'schedule') t.style.display = 'none';
+    });
+    // Hide sync button for externals
+    const sb = document.getElementById('jira-sync-btn');
+    if (sb) sb.style.display = 'none';
+  }
+  // Hide edit controls for viewers
+  if (r === 'viewer') {
+    const sb = document.getElementById('jira-sync-btn');
+    if (sb) sb.style.display = 'none';
+  }
+}
+
+// ── PAGE LOAD ──────────────────────────────────────────────
 window.addEventListener('load', function() {
   const hasClientId = GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== 'GOOGLE_CLIENT_ID';
   if (!hasClientId) {
-    // No Client ID: show manual section, show note
     document.getElementById('no-client-id-note').style.display = '';
     document.getElementById('manual-section').style.display = '';
-    // Hide the Google button render area
     const gWrap = document.querySelector('.google-btn-wrap');
     if (gWrap) gWrap.style.display = 'none';
   } else {
-    // Has Client ID: update the data-client_id attribute dynamically
     const gLoad = document.getElementById('g_id_onload');
     if (gLoad) gLoad.setAttribute('data-client_id', GOOGLE_CLIENT_ID);
   }
@@ -624,14 +713,18 @@ const MONTHS_FULL=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho'
 
 // ── NAV ──
 function showView(v){
+  // Block tab access based on role
+  if(!canViewTab(v)){return;}
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(x=>x.classList.remove('active'));
   document.getElementById('view-'+v).classList.add('active');
   document.querySelector(`[data-view="${v}"]`)?.classList.add('active');
-  document.getElementById('access-btn').style.display=v==='schedule'?'':'none';
+  // Show access/export/audit only for editors+
+  const showEdit = isEditorOrAbove();
+  document.getElementById('access-btn').style.display=(v==='schedule'&&showEdit)?'':'none';
   document.getElementById('export-btn').style.display=v==='schedule'?'':'none';
   document.getElementById('audit-btn').style.display=v==='schedule'?'':'none';
-  document.getElementById('template-btn').style.display=(v==='schedule'&&curKey)?'':'none';
+  document.getElementById('template-btn').style.display=(v==='schedule'&&curKey&&showEdit)?'':'none';
   if(v==='updates')renderUpdatesProjectList();
 }
 
@@ -792,7 +885,7 @@ function renderPortfolio(){
       <td><div style="display:flex;align-items:center;gap:5px;cursor:pointer;overflow:hidden" onclick="openProject('${p.key}')">
         <div style="width:20px;height:20px;border-radius:4px;background:${ib};color:${ic};display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-briefcase" style="font-size:9px"></i></div>
         <span style="font-size:9px;color:var(--blue);background:#e8ecfd;padding:1px 4px;border-radius:3px;font-weight:700;white-space:nowrap;flex-shrink:0">${p.key}</span>
-        <span style="font-weight:500;font-size:9.5px;overflow:hidden;flex:1;min-width:0;word-break:break-word;line-height:1.35" title="${p.summary}">${p.summary.length>57?p.summary.slice(0,57)+'<br>'+p.summary.slice(57):p.summary}</span>
+        <span style="font-weight:500;font-size:clamp(8px,1vw,9.5px);overflow:hidden;flex:1;min-width:0;word-break:break-word;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="${p.summary}">${p.summary}</span>
       </div></td>
       <td><span class="spill" style="background:${ib};color:${ic}">${p.type}</span></td>
       <td><span class="spill ${JIRA_SC[p.status]||'s-bkl'}">${p.status}</span></td>
@@ -1051,7 +1144,7 @@ function openUpdatesProject(key){
   const glChip=document.getElementById('upd-golive');const glVal=document.getElementById('upd-golive-val');
   if(glDate){glChip.style.display='';glVal.textContent=fmtBRFull(glDate)+(p.golive?' (Jira)':' (local)');}
   else glChip.style.display='none';
-  document.getElementById('upd-composer').style.display='';
+  document.getElementById('upd-composer').style.display=isEditorOrAbove()?'':'none';
   if(!schedules[key])schedules[key]={milestones:[],tasks:[],access:[],auditLog:[],updates:[],calendar:'BR',baseline:null};
   renderUpdates(key);renderUpdatesProjectList();
 }
@@ -1064,11 +1157,11 @@ function renderUpdates(key){
   document.getElementById('upd-empty').style.display='none';
   const tagLabel={ok:'✅ No prazo',warn:'⚠️ Em alerta',risk:'🔴 Em risco',info:'ℹ️ Informativo',date:'📅 Mudança de data'};
   updates.forEach(u=>{
-    const isAdmin=currentUser?.isAdmin;
+    const isAdminUser=isAdmin();
     const card=document.createElement('div');card.className='upd-card';
     const initials=u.author.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    const tagsHtml=u.tag?`<div class="upd-tags"><span class="upd-tag ${u.tag}">${tagLabel[u.tag]||u.tag}</span>${u.includeEmail?'<span class="upd-tag info" style="font-size:9px;padding:2px 7px;border-radius:10px">📧 Email</span>':''}${isAdmin?`<button class="upd-del-btn" onclick="deleteUpdate('${key}','${u.id}')">🗑 Apagar</button>`:''}
-    </div>`:`<div class="upd-tags">${isAdmin?`<button class="upd-del-btn" onclick="deleteUpdate('${key}','${u.id}')">🗑 Apagar</button>`:''}</div>`;
+    const tagsHtml=u.tag?`<div class="upd-tags"><span class="upd-tag ${u.tag}">${tagLabel[u.tag]||u.tag}</span>${u.includeEmail?'<span class="upd-tag info" style="font-size:9px;padding:2px 7px;border-radius:10px">📧 Email</span>':''}${isAdminUser?`<button class="upd-del-btn" onclick="deleteUpdate('${key}','${u.id}')">🗑 Apagar</button>`:''}
+    </div>`:`<div class="upd-tags">${isAdminUser?`<button class="upd-del-btn" onclick="deleteUpdate('${key}','${u.id}')">🗑 Apagar</button>`:''}</div>`;
     card.innerHTML=`
       <div class="upd-card-hdr">
         <div class="upd-avatar">${initials}</div>
@@ -1085,7 +1178,7 @@ function renderUpdates(key){
   });
 }
 function deleteUpdate(key,uid2){
-  if(!currentUser?.isAdmin){alert('Apenas administradores podem apagar atualizações.');return;}
+  if(!isAdmin()){alert('Apenas administradores podem apagar atualizações.');return;}
   if(!confirm('Apagar esta atualização?'))return;
   const sc=schedules[key];sc.updates=(sc.updates||[]).filter(u=>u.id!==uid2);
   logChange(key,'Atualização apagada','#dc2626');renderUpdates(key);renderUpdatesProjectList();
@@ -1093,6 +1186,7 @@ function deleteUpdate(key,uid2){
 function reactUpd(key,uid2,emoji){const sc=schedules[key];const u=(sc?.updates||[]).find(x=>x.id===uid2);if(!u)return;if(!u.reactions)u.reactions={};u.reactions[emoji]=(u.reactions[emoji]||0)+1;renderUpdates(key);}
 function submitUpdate(){
   if(!curUpdKey)return;
+  if(!isEditorOrAbove()){alert('Apenas editores e administradores podem publicar atualizações.');return;}
   const body=document.getElementById('composer-text').value.trim();if(!body){alert('Escreva a atualização');return;}
   const sc=schedules[curUpdKey];if(!sc.updates)sc.updates=[];
   const p=PROJECTS.find(x=>x.key===curUpdKey);const st=getStats(curUpdKey);
@@ -1162,6 +1256,9 @@ function sendEmail(){
 //  SCHEDULE
 // ═══════════════════════════════════════════
 function openProject(key){
+  if(!canViewProject(key)){
+    alert('Você não tem acesso a este projeto.');return;
+  }
   curKey=key;const p=PROJECTS.find(x=>x.key===key);
   if(!schedules[key])schedules[key]={milestones:[],tasks:[],access:[{email:(currentUser?.email||'tainah.andrade@bemobi.com'),role:'editor'}],auditLog:[],updates:[],calendar:'BR',baseline:null};
   collapsed.clear();viewOffset=0;
@@ -1235,6 +1332,12 @@ const LW=Object.values(C).reduce((a,b)=>a+b,0);
 function renderSchedule(){
   if(!curKey)return;
   document.getElementById('se-left').style.width=userLeftW+'px';
+  // Show/hide edit controls based on permission
+  const canEd = canEdit(curKey);
+  const newMsBtn = document.getElementById('new-ms-btn');
+  const tplBtn   = document.getElementById('template-btn');
+  if(newMsBtn) newMsBtn.style.display = canEd?'':'none';
+  if(tplBtn)   tplBtn.style.display   = canEd?'':'none';
   renderProjSum();renderTblHdr();renderRows();renderGhdr();renderBars();syncScroll();
 }
 function renderProjSum(){
@@ -1257,6 +1360,8 @@ function taskProg(t){return t.status==='done'?100:t.status==='in_progress'?50:0;
 function renderRows(){
   const sched=schedules[curKey];const cont=document.getElementById('tbl-rows');
   cont.innerHTML='';cont.style.width=LW+'px';
+  const canEd=canEdit(curKey);
+  cont.classList.toggle('no-edit',!canEd);
   const mss=sched.milestones||[];const tasks=sched.tasks||[];
   if(!mss.length){cont.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:50px 20px;gap:9px;color:var(--text3)"><i class="ti ti-calendar-plus" style="font-size:34px;opacity:.3"></i><p style="font-size:12px;text-align:center;max-width:260px;line-height:1.6">Nenhum marco ainda.<br>Clique em <b>Novo marco</b> para começar ou use um <b>Modelo</b>.</p></div>';return;}
   mss.forEach((ms,mi)=>{
@@ -1483,7 +1588,21 @@ function openTemplateModal(){const modal=getOrBuildModal('tpl-modal','Modelos de
 function applyTemplate(k){if(!confirm('Adicionar marcos e tarefas padrão?'))return;const tpl=TEMPLATES[k];const sched=schedules[curKey];let d=new Date(TODAY);tpl.milestones.forEach(m=>{const msId=uid();const start=ds(d);const end=ds(addD(d,m.days));sched.milestones.push({id:msId,name:m.name,start,deadline:end,endReal:'',color:m.color,status:'not_started',assignees:[]});m.tasks.forEach((t,i)=>{sched.tasks.push({id:uid(),msId,name:t.name,start:ds(addD(d,Math.floor(m.days/m.tasks.length*i))),deadline:ds(addD(d,Math.floor(m.days/m.tasks.length*(i+1)))),endReal:'',assignees:[],depId:'',depType:'TI',depMode:'blocked',status:'not_started',notes:'',jiraLink:'',jiraLinkStatus:''});});d=addD(d,m.days+1);});logChange(curKey,`Modelo "${tpl.name}" aplicado`,'#6924E1');closeM('tpl-modal');renderSchedule();renderPortfolio();}
 
 // Access
-function openAccessModal(){const sched=schedules[curKey];if(!sched.access)sched.access=[];const modal=getOrBuildModal('access-modal','Gerenciar Acessos',`<div class="info-box">Editores: criam e editam marcos/tarefas deste cronograma.<br>Externos pré-cadastrados aqui podem acessar o sistema.</div><div class="section-lbl">Adicionar</div><div style="display:flex;gap:6px"><input type="email" id="acc-email" placeholder="email" style="flex:1;border:1px solid var(--border2);border-radius:5px;padding:5px 8px;font-size:10.5px"><select id="acc-role" style="border:1px solid var(--border2);border-radius:5px;padding:5px;font-size:10.5px"><option value="editor">Editor</option><option value="viewer">Visualizador</option><option value="external">Externo</option></select><button class="btn-s" onclick="addAccess()">+</button></div><div class="section-lbl" style="margin-top:4px">Acessos</div><div id="access-list" style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>`,`<button class="btn-c" onclick="closeM('access-modal')">Fechar</button>`);renderAccessList();openM('access-modal');}
+function openAccessModal(){
+  if(!isAdmin()){
+    const w=document.getElementById('access-admin-warn');
+    if(w)w.style.display='';
+    return;
+  }
+  const sched=schedules[curKey];if(!sched.access)sched.access=[];const modal=getOrBuildModal('access-modal','Gerenciar Acessos',`<div class="info-box">
+  <b>Papéis disponíveis:</b><br>
+  • <b>Editor</b> — edita cronograma e publica atualizações<br>
+  • <b>Visualizador</b> — leitura de todas as telas<br>
+  • <b>Externo</b> — acesso apenas a <i>este</i> cronograma (somente leitura)
+</div>
+<div class="info-box warn" id="access-admin-warn" style="display:none">
+  ⚠️ Apenas administradores podem gerenciar acessos.
+</div><div class="section-lbl">Adicionar</div><div style="display:flex;gap:6px"><input type="email" id="acc-email" placeholder="email" style="flex:1;border:1px solid var(--border2);border-radius:5px;padding:5px 8px;font-size:10.5px"><select id="acc-role" style="border:1px solid var(--border2);border-radius:5px;padding:5px;font-size:10.5px"><option value="editor">Editor</option><option value="viewer">Visualizador</option><option value="external">Externo</option></select><button class="btn-s" onclick="addAccess()">+</button></div><div class="section-lbl" style="margin-top:4px">Acessos</div><div id="access-list" style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>`,`<button class="btn-c" onclick="closeM('access-modal')">Fechar</button>`);renderAccessList();openM('access-modal');}
 function renderAccessList(){const sched=schedules[curKey];const list=document.getElementById('access-list');if(!list)return;list.innerHTML='';(sched.access||[]).forEach((a,i)=>{const div=document.createElement('div');div.style.cssText='display:flex;align-items:center;gap:7px;padding:5px 7px;background:var(--bg2);border-radius:5px';div.innerHTML=`<span style="flex:1;font-size:10.5px;font-weight:500">${a.email}</span><select style="font-size:10.5px;padding:2px 5px;border:1px solid var(--border2);border-radius:4px" onchange="schedules[curKey].access[${i}].role=this.value"><option value="editor" ${a.role==='editor'?'selected':''}>Editor</option><option value="viewer" ${a.role==='viewer'?'selected':''}>Visualizador</option><option value="external" ${a.role==='external'?'selected':''}>Externo</option></select><button class="rm" onclick="schedules[curKey].access.splice(${i},1);renderAccessList()">×</button>`;list.appendChild(div);});if(!list.children.length)list.innerHTML='<div style="font-size:10.5px;color:var(--text3);padding:4px">Nenhum.</div>';}
 function addAccess(){const email=document.getElementById('acc-email').value.trim();const role=document.getElementById('acc-role').value;if(!email||!/^[^@]+@[^@]+\.[^@]+$/.test(email)){alert('E-mail inválido');return;}const sched=schedules[curKey];if(!sched.access)sched.access=[];if(sched.access.find(a=>a.email===email)){alert('Já adicionado');return;}sched.access.push({email,role});if(!globalAccess[curKey])globalAccess[curKey]=[];globalAccess[curKey].push({email,role});document.getElementById('acc-email').value='';renderAccessList();}
 
