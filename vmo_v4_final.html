@@ -654,8 +654,10 @@ async function loadSchedulesFromSheet() {
     const d = await r.json();
     if (d.ok && d.schedules) {
       // Merge loaded schedules into local state
+      // Preserve any in-memory updates not yet persisted
       Object.entries(d.schedules).forEach(([key, data]) => {
-        schedules[key] = data;
+        const existingUpdates = schedules[key]?.updates || [];
+        schedules[key] = { ...data, updates: existingUpdates };
       });
       setSyncTxt('ok', `✓ Dados carregados`);
       setTimeout(() => setSyncTxt('idle', ''), 3000);
@@ -1676,25 +1678,47 @@ function openAuditModal(){const modal=getOrBuildModal('audit-modal','Histórico'
 async function persistSchedule(key) {
   if (!GAS_URL || GAS_URL.includes('COLE_AQUI')) return;
   if (!schedules[key]) return;
+  // Show saving indicator
+  setSyncTxt('syncing', 'Salvando...');
   try {
-    await fetch(GAS_URL, {
+    const r = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({
         action: 'saveSchedule',
         projectKey: key,
-        scheduleData: schedules[key],
+        scheduleData: {
+          milestones: schedules[key].milestones || [],
+          tasks:      schedules[key].tasks || [],
+          access:     schedules[key].access || [],
+          auditLog:   (schedules[key].auditLog || []).slice(0, 50), // keep last 50
+          calendar:   schedules[key].calendar || 'BR',
+          holidays:   schedules[key].holidays || [],
+          baseline:   schedules[key].baseline || null,
+          // updates saved separately via persistUpdates
+        },
         userName: currentUser?.name || ''
       })
     });
-  } catch (e) { console.warn('Erro ao salvar cronograma:', e.message); }
+    const d = await r.json();
+    if (d.ok) {
+      setSyncTxt('ok', '✓ Salvo');
+      setTimeout(() => setSyncTxt('idle', ''), 2500);
+    } else {
+      setSyncTxt('error', 'Erro ao salvar: ' + (d.error || '').slice(0, 30));
+      console.error('persistSchedule error:', d.error);
+    }
+  } catch (e) {
+    setSyncTxt('error', 'Falha ao salvar');
+    console.error('persistSchedule fetch error:', e.message);
+  }
 }
 
 async function persistUpdates(key) {
   if (!GAS_URL || GAS_URL.includes('COLE_AQUI')) return;
   if (!schedules[key]) return;
   try {
-    await fetch(GAS_URL, {
+    const r = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({
@@ -1703,7 +1727,9 @@ async function persistUpdates(key) {
         updates: schedules[key].updates || []
       })
     });
-  } catch (e) { console.warn('Erro ao salvar updates:', e.message); }
+    const d = await r.json();
+    if (!d.ok) console.error('persistUpdates error:', d.error);
+  } catch (e) { console.error('persistUpdates fetch error:', e.message); }
 }
 
 const GAS_URL='https://script.google.com/macros/s/AKfycbyZIspUA1yqpcvI5f23wTzvfwiw03Fui2S0ig1H6srHbpuY7IB3YmQn2uafm1orllKfdw/exec';
