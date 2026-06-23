@@ -322,7 +322,7 @@ table.pft tr:hover td{background:var(--bg2)}
 .login-input:focus{outline:none;border-color:var(--purple)}
 .login-btn{width:100%;background:linear-gradient(135deg,var(--purple),#027BFF);color:#fff;border:none;padding:10px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:3px}
 .login-hint{font-size:10.5px;color:var(--text3);text-align:center;margin-top:9px;line-height:1.6}
-.login-err{font-size:10.5px;color:var(--red);background:#fee2e2;padding:5px 9px;border-radius:6px;margin-bottom:7px;display:none}
+.login-err{font-size:10.5px;color:#b91c1c;background:#fee2e2;border:1px solid #fca5a5;padding:8px 11px;border-radius:7px;margin-bottom:10px;display:none;line-height:1.5}
 .login-success-chip{display:none;font-size:11px;background:#dcfce7;color:#166534;padding:7px 11px;border-radius:8px;margin-bottom:10px;align-items:center;gap:6px}
 .google-btn-wrap{display:flex;justify-content:center;margin-bottom:4px}
 .no-client-id-note{font-size:10px;color:var(--amber);background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:6px 10px;margin-bottom:10px;line-height:1.5;display:none}
@@ -339,13 +339,13 @@ table.pft tr:hover td{background:var(--bg2)}
     <div class="fg">
       <label style="font-size:10.5px;color:var(--text3);font-weight:500">Email corporativo</label>
       <input class="login-input" type="email" id="login-email" placeholder="seu@bemobi.com"
-        onkeydown="if(event.key==='Enter')document.getElementById('login-password').focus()">
+        oninput="document.getElementById('login-err').style.display='none'" onkeydown="if(event.key==='Enter')document.getElementById('login-password').focus()">
     </div>
     <div class="fg" style="margin-top:6px">
       <label style="font-size:10.5px;color:var(--text3);font-weight:500">Senha</label>
       <div style="position:relative">
         <input class="login-input" type="password" id="login-password" placeholder="Sua senha"
-          onkeydown="if(event.key==='Enter')doLoginManual()" style="padding-right:36px">
+          oninput="document.getElementById('login-err').style.display='none'" onkeydown="if(event.key==='Enter')doLoginManual()" style="padding-right:36px">
         <button onclick="togglePwd()" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);border:none;background:transparent;cursor:pointer;color:var(--text3);font-size:13px" id="pwd-eye">
           <i class="ti ti-eye"></i>
         </button>
@@ -589,20 +589,37 @@ function doLoginManual() {
   const email    = (document.getElementById('login-email')?.value    || '').trim().toLowerCase();
   const password = (document.getElementById('login-password')?.value || '').trim();
 
+  // 1. Email vazio ou formato inválido
   if (!email || !/^[^@]+@[^@]+\.[^@]+$/.test(email)) {
-    showLoginErr('E-mail inválido'); return;
-  }
-  if (!email.endsWith('@bemobi.com')) {
-    showLoginErr('Acesso restrito a emails @bemobi.com.'); return;
-  }
-  if (!password) {
-    showLoginErr('Informe sua senha.'); return;
+    showLoginErr('⚠️ Informe um e-mail válido.'); return;
   }
 
+  // 2. Domínio diferente de bemobi.com
+  if (!email.endsWith('@bemobi.com')) {
+    const domain = email.split('@')[1] || '';
+    showLoginErr(`🚫 O domínio "@${domain}" não tem acesso à ferramenta. Esta plataforma é exclusiva para usuários @bemobi.com.`); return;
+  }
+
+  // 3. Senha vazia
+  if (!password) {
+    showLoginErr('⚠️ Informe sua senha.'); return;
+  }
+
+  // 4. Usuário não cadastrado
+  const userExists = USER_REGISTRY.find(u => u.email.toLowerCase() === email);
+  if (!userExists) {
+    showLoginErr('❌ Usuário não encontrado. Solicite seu cadastro a um administrador da ferramenta.'); return;
+  }
+
+  // 5. Usuário inativo
+  if (!userExists.active) {
+    showLoginErr('🔒 Sua conta está desativada. Entre em contato com um administrador.'); return;
+  }
+
+  // 6. Senha incorreta
   const user = checkPassword(email, password);
   if (!user) {
-    showLoginErr('Email ou senha incorretos. Solicite acesso a um administrador.');
-    return;
+    showLoginErr('❌ Senha incorreta. Verifique sua senha ou solicite um reset a um administrador.'); return;
   }
 
   finalizeLogin(user.email, user.name, null);
