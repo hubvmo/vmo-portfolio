@@ -1952,6 +1952,7 @@ async function persistSchedule(key) {
     if (d.ok) {
       setSyncTxt('ok', '✓ Salvo');
       setTimeout(() => setSyncTxt('idle', ''), 2500);
+      syncToJira(key); // grava URL em customfield_29785
     } else {
       setSyncTxt('error', 'Erro ao salvar: ' + (d.error || '').slice(0, 30));
       console.error('persistSchedule error:', d.error);
