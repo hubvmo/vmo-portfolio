@@ -313,7 +313,7 @@ table.pft tr:hover td{background:var(--bg2)}
 /* LOGIN */
 #login-screen{position:fixed;inset:0;background:linear-gradient(135deg,var(--navy) 0%,#1e3a8a 100%);display:flex;align-items:center;justify-content:center;z-index:1000}
 #login-screen.hidden{display:none}
-.login-box{background:#fff;border-radius:16px;padding:34px 38px;width:400px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.login-box{background:#fff;border-radius:16px;padding:34px 38px;width:400px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:95vh;overflow-y:auto}
 .login-logo{font-size:22px;font-weight:700;background:linear-gradient(135deg,#6924E1,#027BFF);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:3px}
 .login-sub{font-size:11px;color:var(--text3);margin-bottom:20px}
 .login-divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--text3);font-size:10px}
@@ -647,7 +647,7 @@ function finalizeLogin(email, name, picture) {
 
 function showLoginErr(msg) {
   const el = document.getElementById('login-err');
-  if (el) { el.textContent = msg; el.style.display = ''; }
+  if (el) { el.innerHTML = msg; el.style.display = 'block'; el.scrollIntoView({behavior:'smooth', block:'center'}); }
 }
 
 // ── APPLY UI RESTRICTIONS ──────────────────────────────────────────────────
