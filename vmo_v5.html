@@ -647,7 +647,10 @@ function finalizeLogin(email, name, picture) {
 
 function showLoginErr(msg) {
   const el = document.getElementById('login-err');
-  if (el) { el.innerHTML = msg; el.style.display = 'block'; el.scrollIntoView({behavior:'smooth', block:'center'}); }
+  if (!el) { alert(msg); return; }
+  el.innerHTML = msg;
+  el.style.cssText = 'display:block!important;font-size:10.5px;color:#b91c1c;background:#fee2e2;border:1px solid #fca5a5;padding:8px 11px;border-radius:7px;margin-bottom:10px;line-height:1.5';
+  el.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
 // ── APPLY UI RESTRICTIONS ──────────────────────────────────────────────────
@@ -2045,18 +2048,20 @@ async function persistUpdates(key) {
     }
   } catch(e) { console.error('persistUpdates error:', e); }
 }
-function autoLoadOnLogin() {
-  // Load from Firebase then sync Jira
-  loadSchedulesFromSheet().then(() => {
-    autoSyncProjectsFromJira();
-    renderPortfolio();
-    renderUpdatesProjectList();
-    // External: redirect to their project
-    if (currentUser?.role === 'external') {
-      const myProjects = PROJECTS.filter(p => canViewProject(p.key));
-      if (myProjects.length === 1) openProject(myProjects[0].key);
-    }
-  });
+async function autoLoadOnLogin() {
+  // Step 1: Load schedules + users from Firebase
+  await loadSchedulesFromSheet();
+  // Step 2: Render immediately with what we have
+  renderKPI();
+  renderPortfolio();
+  renderUpdatesProjectList();
+  // Step 3: Sync fresh data from Jira in background
+  autoSyncProjectsFromJira();
+  // Step 4: External users go to their project
+  if (currentUser?.role === 'external') {
+    const myProjects = PROJECTS.filter(p => canViewProject(p.key));
+    if (myProjects.length === 1) openProject(myProjects[0].key);
+  }
 }
 
 async function autoSyncProjectsFromJira() {
