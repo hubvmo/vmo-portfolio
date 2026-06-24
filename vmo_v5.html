@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VMO — Gestão de Portfólio</title>
+<!-- VMO v5.3 -->
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -41,7 +42,6 @@ body{font-family:'Poppins',system-ui,sans-serif;font-size:11px;background:var(--
 .tn-profile{position:relative;display:flex;align-items:center;gap:7px;cursor:pointer;padding:4px 8px;border-radius:7px;transition:background .15s}
 .tn-profile:hover{background:rgba(255,255,255,.1)}
 .tn-profile-menu{position:absolute;top:calc(100% + 8px);right:0;background:#fff;border-radius:10px;box-shadow:0 8px 32px rgba(11,27,115,.2);min-width:200px;z-index:200;display:none;overflow:hidden;border:1px solid var(--border)}
-.tn-profile-menu.open{display:block}
 .tn-pm-header{padding:12px 14px;border-bottom:1px solid var(--border);background:var(--bg2)}
 .tn-pm-name{font-size:12px;font-weight:600;color:var(--text)}
 .tn-pm-email{font-size:10px;color:var(--text3);margin-top:1px}
@@ -763,12 +763,15 @@ function clearSession() {
 }
 
 function toggleProfileMenu() {
+  event.stopPropagation();
   const menu = document.getElementById('tn-profile-menu');
-  if (menu) menu.classList.toggle('open');
+  if (!menu) return;
+  const isOpen = menu.style.display === 'block';
+  menu.style.display = isOpen ? 'none' : 'block';
 }
 function closeProfileMenu() {
   const menu = document.getElementById('tn-profile-menu');
-  if (menu) menu.classList.remove('open');
+  if (menu) menu.style.display = 'none';
 }
 function doLogout() {
   if (!confirm('Deseja sair da sua conta?')) return;
