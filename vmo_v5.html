@@ -397,7 +397,7 @@ table.pft tr:hover td{background:var(--bg2)}
     <button class="tn-btn" id="audit-btn" onclick="openAuditModal()" style="display:none"><i class="ti ti-history" style="font-size:10px"></i> Histórico</button>
     <div class="tn-sep"></div>
     <!-- Profile dropdown -->
-    <div class="tn-profile" id="tn-profile" onclick="toggleProfileMenu()">
+    <div class="tn-profile" id="tn-profile" onclick="toggleProfileMenu(event)">
       <div class="tn-avatar" id="tn-avatar">T</div>
       <div style="display:flex;flex-direction:column;line-height:1.2">
         <span class="tn-uname" id="tn-uname" style="font-size:11px">Tainah</span>
@@ -762,8 +762,8 @@ function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
 }
 
-function toggleProfileMenu() {
-  event.stopPropagation();
+function toggleProfileMenu(e) {
+  if(e) e.stopPropagation();
   const menu = document.getElementById('tn-profile-menu');
   if (!menu) return;
   const isOpen = menu.style.display === 'block';
