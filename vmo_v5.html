@@ -2183,17 +2183,28 @@ async function autoSyncProjectsFromJira() {
   // Then sync fresh from Jira
   if (!GAS_URL || GAS_URL.includes('COLE_AQUI')) return;
   try {
+    const ctrl2 = new AbortController();
+    const timer2 = setTimeout(() => ctrl2.abort(), 30000);
     const r = await fetch(GAS_URL, {
       method: 'POST', headers: {'Content-Type':'text/plain'},
+      signal: ctrl2.signal,
       body: JSON.stringify({action:'syncProjects', jql:JIRA_JQL, fields:JIRA_SYNC_FIELDS})
     });
+    clearTimeout(timer2);
     const d = await r.json();
     if (d.ok && d.projects && d.projects.length) {
       applyJiraSync(d.projects);
       setSyncTxt('ok', `✓ ${d.projects.length} projetos`);
       setTimeout(() => setSyncTxt('idle',''), 4000);
+    } else {
+      console.warn('autoSync: resposta inválida', d);
+      setSyncTxt('idle','');
     }
-  } catch(e) { console.warn('autoSync Jira error:', e.message); setSyncTxt('idle',''); }
+  } catch(e) {
+    if(e.name==='AbortError') console.warn('autoSync: timeout 30s');
+    else console.warn('autoSync Jira error:', e.message);
+    setSyncTxt('idle','');
+  }
 }
 
 async function persistUsers() {
@@ -2226,8 +2237,12 @@ async function syncFromJira(){
       return;
     }
     try{
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30000); // 30s timeout
       const r=await fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+        signal: ctrl.signal,
         body:JSON.stringify({action:'syncProjects',jql:JIRA_JQL,fields:JIRA_SYNC_FIELDS})});
+      clearTimeout(timer);
       const d=await r.json();
       if(d.ok&&d.projects&&d.projects.length){
         applyJiraSync(d.projects);
@@ -2239,7 +2254,11 @@ async function syncFromJira(){
     }catch(e){
       if(btn)btn.disabled=false;
       if(icon)icon.classList.remove('spin');
-      showSyncError(e.message);
+      if(e.name==='AbortError'){
+        showSyncError('Timeout: GAS demorou mais de 30s. Verifique o Apps Script.');
+      } else {
+        showSyncError(e.message);
+      }
     }
   } else {
     openSyncModal();
@@ -2374,6 +2393,10 @@ function openSyncModal(){
     `<button class="btn-c" onclick="closeM('sync-modal')">Fechar</button>
      <button class="btn-s" onclick="parseSyncJson()"><i class="ti ti-refresh"></i> Aplicar JSON</button>`
   );
+  // Add test GAS button content
+  const gasUrl = GAS_URL;
+  const testDiv = document.getElementById('gas-test-link');
+  if(testDiv) testDiv.href = gasUrl;
   openM('sync-modal');
 }
 
