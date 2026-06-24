@@ -2183,13 +2183,29 @@ async function autoLoadOnLogin() {
       // Load schedules
       const snap = await db.collection('schedules').get();
       snap.forEach(doc => {
-        schedules[doc.id] = { ...doc.data(), updates: schedules[doc.id]?.updates || [] };
+        try {
+          // JSON round-trip to strip Firestore Timestamp objects
+          const raw = JSON.parse(JSON.stringify(doc.data()));
+          schedules[doc.id] = {
+            milestones: raw.milestones || [],
+            tasks:      raw.tasks      || [],
+            access:     raw.access     || [],
+            auditLog:   raw.auditLog   || [],
+            calendar:   raw.calendar   || 'BR',
+            holidays:   raw.holidays   || [],
+            baseline:   raw.baseline   || null,
+            updates:    schedules[doc.id]?.updates || [],
+          };
+        } catch(e) { console.warn('Error loading schedule', doc.id, e); }
       });
       // Load updates
       const snapU = await db.collection('updates').get();
       snapU.forEach(doc => {
-        if (schedules[doc.id]) schedules[doc.id].updates = doc.data().updates || [];
-        else schedules[doc.id] = { milestones:[], tasks:[], access:[], auditLog:[], updates: doc.data().updates||[], calendar:'BR', baseline:null };
+        try {
+          const raw = JSON.parse(JSON.stringify(doc.data()));
+          if (schedules[doc.id]) schedules[doc.id].updates = raw.updates || [];
+          else schedules[doc.id] = { milestones:[], tasks:[], access:[], auditLog:[], updates: raw.updates||[], calendar:'BR', baseline:null };
+        } catch(e) { console.warn('Error loading updates', doc.id, e); }
       });
       // Load users
       const snapUsers = await db.collection('app_config').doc('users').get();
